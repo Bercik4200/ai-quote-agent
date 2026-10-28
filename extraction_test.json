@@ -1,0 +1,204 @@
+{
+  "name": "extraction_test",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "fea70005-8c6f-44ad-aabf-743058984126",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1285c7ee-83a9-442c-9944-1a4a810d3742",
+              "name": "email_body",
+              "value": "Dzień dobry, potrzebuję 500 ulotek A5, druk dwustronny, papier kredowy 170g. Termin do piątku. Faktura na firmę Kwiaciarnia Róża, NIP 7781234563. Pozdrawiam, Anna Nowak, tel. 600 123 456",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "de67888c-d042-4e54-9752-994b866642c9",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Jesteś asystentem drukarni. Dzisiejsza data: {{ $now.toFormat('yyyy-MM-dd') }}.\nWyciągnij dane zamówienia z maila klienta.\nZwróć WYŁĄCZNIE JSON w formacie:\n{\n  \"customer_name\": string|null,\n  \"company\": string|null,\n  \"nip\": string|null,\n  \"phone\": string|null,\n  \"items\": [\n    {\n      \"product\": \"ulotki\"|\"plakaty\"|\"wizytowki\"|\"inne\",\n      \"format\": string|null,\n      \"quantity\": number,\n      \"paper\": string|null,\n      \"sides\": \"1\"|\"2\"|null\n    }\n  ],\n  \"deadline\": string|null,\n  \"missing_info\": [string]\n}\nZasady:\n- deadline w formacie YYYY-MM-DD. Daty względne (\"do piątku\", \"za tydzień\") przelicz względem dzisiejszej daty.\n- Jeśli czegoś brakuje, wpisz null i dodaj nazwę pola do missing_info.\n- Niczego nie zmyślaj.\n\nMail:\n{{ $json.email_body }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "aa5b072b-9f71-4e55-9f40-cbe67d487fc1",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "p0Bv9rWWmbiCJoqy",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $json.content?.parts?.[0]?.text ?? '';\nconst clean = raw.replace(/```json|```/g, '').trim();\n\nlet order;\ntry {\n  order = JSON.parse(clean);\n} catch (e) {\n  return { json: { valid: false, errors: ['LLM nie zwrócił poprawnego JSON'], raw } };\n}\n\nconst errors = [];\n\nif (!order.customer_name) errors.push('Brak imienia i nazwiska');\nif (!Array.isArray(order.items) || order.items.length === 0) errors.push('Brak pozycji zamówienia');\n\n(order.items || []).forEach((it, i) => {\n  if (!Number.isInteger(it.quantity) || it.quantity <= 0) errors.push(`Pozycja ${i + 1}: nieprawidłowa ilość`);\n  if (!it.format) errors.push(`Pozycja ${i + 1}: brak formatu`);\n});\n\n// Walidacja NIP (suma kontrolna)\nif (order.nip) {\n  const d = order.nip.replace(/\\D/g, '');\n  const w = [6, 5, 7, 2, 3, 4, 5, 6, 7];\n  const ok = d.length === 10 &&\n    w.reduce((s, wi, i) => s + wi * Number(d[i]), 0) % 11 === Number(d[9]);\n  if (!ok) errors.push('Nieprawidłowy NIP');\n  order.nip = d;\n}\n\nif (order.deadline && new Date(order.deadline) < new Date(new Date().toDateString())) {\n  errors.push('Termin w przeszłości');\n}\n\nerrors.push(...(order.missing_info || []).map(f => `Brak danych: ${f}`));\n\nreturn { json: { valid: errors.length === 0, errors, order } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        0
+      ],
+      "id": "9c624395-5ab4-4b8d-b123-df4a579e0fbc",
+      "name": "Walidacja"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1hL8Q2f3EgM6RGmlt8sNK7QQKzMirlhC8YI689tFZpo4",
+          "mode": "list",
+          "cachedResultName": "cennik",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1hL8Q2f3EgM6RGmlt8sNK7QQKzMirlhC8YI689tFZpo4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Arkusz1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1hL8Q2f3EgM6RGmlt8sNK7QQKzMirlhC8YI689tFZpo4/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1040,
+        0
+      ],
+      "id": "d98531ea-90c6-4ca3-9cae-ae5ce467af93",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kgAUyjws2zvL0KFl",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const { order, valid, errors } = $('Walidacja').first().json;\nconst prices = $input.all().map(i => i.json);\nconst norm = v => String(v ?? '').trim().toLowerCase();\n\nconst lines = (order.items || []).map(it => {\n  const tier = prices\n    .filter(p =>\n      norm(p.product) === norm(it.product) &&\n      norm(p.format) === norm(it.format) &&\n      norm(p.sides) === norm(it.sides ?? '1') &&\n      it.quantity >= Number(p.min_qty))\n    .sort((a, b) => Number(b.min_qty) - Number(a.min_qty))[0];\n\n  if (!tier) return { ...it, total: null, error: `Brak ceny dla: ${it.product} ${it.format}` };\n\n  const per100 = Number(tier.price_per_100);\n  return { ...it, price_per_100: per100, total: Math.round(per100 * it.quantity) / 100 };\n});\n\nconst pricingErrors = lines.filter(l => l.error).map(l => l.error);\nconst netto = Math.round(lines.reduce((s, l) => s + (l.total || 0), 0) * 100) / 100;\nconst vat = Math.round(netto * 0.23 * 100) / 100;\n\nreturn [{\n  json: {\n    valid: valid && pricingErrors.length === 0,\n    errors: [...errors, ...pricingErrors],\n    order,\n    lines,\n    netto,\n    vat,\n    brutto: Math.round((netto + vat) * 100) / 100\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        0
+      ],
+      "id": "cf8a462d-462d-4972-824a-8c04182f24ae",
+      "name": "Wycena"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Walidacja",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Walidacja": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Wycena",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "0e38930c-1295-4116-838e-fc1fd3622f5e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8718577bb6709b346a0488f0937201d016efb5294a66aaa2ca0f408a1655cf59"
+  },
+  "nodeGroups": [],
+  "id": "HnuWkD7MFHEBt4W7",
+  "tags": []
+}
