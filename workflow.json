@@ -127,6 +127,65 @@
       ],
       "id": "cf8a462d-462d-4972-824a-8c04182f24ae",
       "name": "Wycena"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "dc1456ea-44d8-4c35-9b2d-a752c8bd6bc7",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1488,
+        0
+      ],
+      "id": "1b31e026-106c-434a-b465-d1270dcdbce5",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "company": "={{ $json.order.company || 'Osoba prywatna' }}",
+        "lastname": "={{ $json.order.customer_name.split(' ').slice(-1)[0] }}",
+        "additionalFields": {
+          "description": "=Zamówienie: {{ $json.lines.map(l => `- ${l.quantity} szt. ${l.product} ${l.format}, ${l.sides}-str., ${l.paper}: ${l.total} zł netto`).join('\\n') }}  Termin: {{ $json.order.deadline }} NIP: {{ $json.order.nip }} Wycena: netto {{ $json.netto }} zł | VAT {{ $json.vat }} zł | brutto {{ $json.brutto }} zł",
+          "firstname": "={{ $json.order.customer_name.split(' ').slice(0, -1).join(' ') }}",
+          "phone": "={{ $json.order.phone }}"
+        }
+      },
+      "type": "n8n-nodes-base.salesforce",
+      "typeVersion": 1.1,
+      "position": [
+        1712,
+        -96
+      ],
+      "id": "94bc2726-6acb-43aa-b37b-1806bb91bee1",
+      "name": "Create a lead",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "3q4FJFbOALCW0Rh8",
+          "name": "Salesforce account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -185,6 +244,28 @@
           }
         ]
       ]
+    },
+    "Wycena": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Create a lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -193,7 +274,7 @@
     "binaryMode": "separate",
     "availableInMCP": true
   },
-  "versionId": "0e38930c-1295-4116-838e-fc1fd3622f5e",
+  "versionId": "56e6595e-5d70-4fee-92eb-bd45640b6a08",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "8718577bb6709b346a0488f0937201d016efb5294a66aaa2ca0f408a1655cf59"
