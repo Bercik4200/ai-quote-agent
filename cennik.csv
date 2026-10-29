@@ -1,0 +1,13 @@
+product,format,sides,min_qty,price_per_100
+ulotki,A5,1,100,35
+ulotki,A5,1,500,22
+ulotki,A5,1,1000,15
+ulotki,A5,2,100,45
+ulotki,A5,2,500,30
+ulotki,A5,2,1000,20
+ulotki,A4,2,100,70
+ulotki,A4,2,500,48
+wizytowki,90x50,2,100,40
+wizytowki,90x50,2,500,18
+plakaty,A3,1,1,600
+plakaty,A2,1,1,1200
