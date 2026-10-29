@@ -4,7 +4,7 @@ Agent AI zbudowany w **n8n**, który odbiera zapytania ofertowe z e-maila, wyci�
 
 Przykładowy scenariusz: drukarnia, która dostaje zapytania typu *„Poproszę 500 ulotek A5 dwustronnie na piątek, firma X, NIP…”*.
 
-> 🎥 **Demo:** [link do nagrania](#)
+> 🎥 **Demo:** [obejrzyj nagranie](https://youtu.be/4aqhzdX40D8)
 > 📸 Zrzuty ekranu: [`docs/`](docs/)
 
 ---
@@ -121,4 +121,4 @@ flowchart LR
 
 ---
 
-**Autor:** Albert Kistowski · [[LinkedIn](#)](https://www.linkedin.com/in/albert-kistowski-a0584b215/)
+**Autor:** Albert Kistowski ·   [LinkedIn](https://www.linkedin.com/in/albert-kistowski-a0584b215/)
