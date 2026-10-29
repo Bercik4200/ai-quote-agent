@@ -121,4 +121,4 @@ flowchart LR
 
 ---
 
-**Autor:** Albert · [LinkedIn](#)
+**Autor:** Albert Kistowski · [[LinkedIn](#)](https://www.linkedin.com/in/albert-kistowski-a0584b215/)
