@@ -1,25 +1,32 @@
 {
-  "name": "extraction_test",
+  "name": "AI_quote_agent",
   "nodes": [
-    {
-      "parameters": {},
-      "type": "n8n-nodes-base.manualTrigger",
-      "typeVersion": 1,
-      "position": [
-        0,
-        0
-      ],
-      "id": "fea70005-8c6f-44ad-aabf-743058984126",
-      "name": "When clicking ‘Execute workflow’"
-    },
     {
       "parameters": {
         "assignments": {
           "assignments": [
             {
-              "id": "1285c7ee-83a9-442c-9944-1a4a810d3742",
+              "id": "69309c42-8604-4c7b-8203-fba1a956add4",
+              "name": "sender",
+              "value": "={{ $json.from.value[0].address }}",
+              "type": "string"
+            },
+            {
+              "id": "7a6c5364-cf6a-4dac-bcae-da585e70e9a3",
+              "name": "thread_id",
+              "value": "={{ $json.threadId }}",
+              "type": "string"
+            },
+            {
+              "id": "37a3daba-1866-4430-9924-3fc8457b4d0c",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "10f2a0d0-d9d9-408f-818f-8e604779a9d7",
               "name": "email_body",
-              "value": "Dzień dobry, potrzebuję 500 ulotek A5, druk dwustronny, papier kredowy 170g. Termin do piątku. Faktura na firmę Kwiaciarnia Róża, NIP 7781234563. Pozdrawiam, Anna Nowak, tel. 600 123 456",
+              "value": "={{ $json.text }}",
               "type": "string"
             }
           ]
@@ -34,6 +41,156 @@
       ],
       "id": "de67888c-d042-4e54-9752-994b866642c9",
       "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $json.content?.parts?.[0]?.text ?? '';\nconst clean = raw.replace(/```json|```/g, '').trim();\n\nlet order;\ntry {\n  order = JSON.parse(clean);\n} catch (e) {\n  return { json: { valid: false, errors: ['LLM nie zwrócił poprawnego JSON'], raw } };\n}\n\nconst errors = [];\n\nif (!order.customer_name) errors.push('Brak imienia i nazwiska');\nif (!Array.isArray(order.items) || order.items.length === 0) errors.push('Brak pozycji zamówienia');\n\n(order.items || []).forEach((it, i) => {\n  if (!Number.isInteger(it.quantity) || it.quantity <= 0) errors.push(`Pozycja ${i + 1}: nieprawidłowa ilość`);\n  if (!it.format) errors.push(`Pozycja ${i + 1}: brak formatu`);\n});\n\n// Walidacja NIP (suma kontrolna)\nif (order.nip) {\n  const d = order.nip.replace(/\\D/g, '');\n  const w = [6, 5, 7, 2, 3, 4, 5, 6, 7];\n  const ok = d.length === 10 &&\n    w.reduce((s, wi, i) => s + wi * Number(d[i]), 0) % 11 === Number(d[9]);\n  if (!ok) errors.push('Nieprawidłowy NIP');\n  order.nip = d;\n}\n\nif (order.deadline && new Date(order.deadline) < new Date(new Date().toDateString())) {\n  errors.push('Termin w przeszłości');\n}\n\n(order.items || []).forEach((it, i) => {\n  if (!it.product) errors.push(`Pozycja ${i + 1}: nie wiadomo, jaki produkt`);\n  if (!it.sides) errors.push(`Pozycja ${i + 1}: nie podano, czy druk jedno- czy dwustronny`);\n});\n\nreturn { json: { valid: errors.length === 0, errors, order } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        0
+      ],
+      "id": "9c624395-5ab4-4b8d-b123-df4a579e0fbc",
+      "name": "Walidacja"
+    },
+    {
+      "parameters": {
+        "jsCode": "const { order, valid, errors } = $('Walidacja').first().json;\nconst prices = $input.all().map(i => i.json);\nconst norm = v => String(v ?? '').trim().toLowerCase();\n\nconst lines = (order.items || []).map(it => {\n  const tier = prices\n    .filter(p =>\n      norm(p.product) === norm(it.product) &&\n      norm(p.format) === norm(it.format) &&\n      norm(p.sides) === norm(it.sides ?? '1') &&\n      it.quantity >= Number(p.min_qty))\n    .sort((a, b) => Number(b.min_qty) - Number(a.min_qty))[0];\n\n  if (!tier) return { ...it, total: null, error: `Brak ceny dla: ${it.product} ${it.format}` };\n\n  const per100 = Number(tier.price_per_100);\n  return { ...it, price_per_100: per100, total: Math.round(per100 * it.quantity) / 100 };\n});\n\nconst pricingErrors = lines.filter(l => l.error).map(l => l.error);\nconst netto = Math.round(lines.reduce((s, l) => s + (l.total || 0), 0) * 100) / 100;\nconst vat = Math.round(netto * 0.23 * 100) / 100;\n\nreturn [{\n  json: {\n    valid: valid && pricingErrors.length === 0,\n    errors: [...errors, ...pricingErrors],\n    order,\n    lines,\n    netto,\n    vat,\n    brutto: Math.round((netto + vat) * 100) / 100\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        0
+      ],
+      "id": "cf8a462d-462d-4972-824a-8c04182f24ae",
+      "name": "Wycena"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Jesteś handlowcem drukarni \"Drukarnia Demo\". Napisz krótką, uprzejmą odpowiedź na zapytanie klienta z ofertą cenową.\nZasady:\n- zwracaj się do klienta po imieniu, formą \"Pani/Panie\"\n- wypisz pozycje z ilością, specyfikacją i ceną netto\n- podaj sumę netto, VAT 23% i brutto\n- potwierdź termin realizacji\n- na końcu poproś o akceptację oferty odpowiedzią na tego maila\n- podpis: \"Zespół Drukarni Demo\"\n- zwróć sam tekst maila, bez tematu i bez formatowania markdown\n\nDane:\n{{ JSON.stringify($('Wycena').first().json) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1936,
+        -96
+      ],
+      "id": "af6c7bce-625b-4cb0-80aa-ffb00766d14d",
+      "name": "Oferta",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "p0Bv9rWWmbiCJoqy",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "in:inbox is:unread -from:me"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        16,
+        0
+      ],
+      "id": "002e3bf0-83b3-469d-aedd-cb1674d95a6b",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "8ypWgNyJ8TfqaxQz",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Jesteś handlowcem drukarni \"Drukarnia Demo\". Klient przysłał zapytanie, ale nie możemy przygotować oferty, bo są problemy z danymi.\nNapisz krótką, uprzejmą odpowiedź z prośbą o uzupełnienie lub poprawienie informacji.\nZasady:\n- zwracaj się formą \"Pani/Panie\" (jeśli znasz imię, użyj go)\n- wyjaśnij problemy prostym językiem, bez technicznych sformułowań (np. zamiast \"Nieprawidłowy NIP\" napisz, że podany NIP wydaje się niepoprawny i poproś o sprawdzenie)\n- podziękuj za zapytanie i napisz, że ofertę wyślemy zaraz po otrzymaniu danych\n- podpis: \"Zespół Drukarni Demo\"\n- zwróć sam tekst maila, bez tematu i bez markdown\n- pytaj WYŁĄCZNIE o problemy wymienione w sekcji \"Problemy\", o nic więcej\n\nProblemy: {{ $json.errors.join('; ') }}\nDane klienta: {{ JSON.stringify($json.order) }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1712,
+        96
+      ],
+      "id": "af3af6fb-c40d-4b73-9dfa-1a7e2236ef82",
+      "name": "Prośba o dane",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "p0Bv9rWWmbiCJoqy",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "externalId": "Customer_Key__c",
+        "externalIdValue": "=  {{ $json.order.nip ? 'NIP-' + $json.order.nip : 'EMAIL-' + $('Edit Fields').first().json.sender.toLowerCase() }}",
+        "company": "={{ $json.order.company || 'Osoba prywatna' }}",
+        "lastname": "={{ $json.order.customer_name.split(' ').slice(-1)[0] }}",
+        "additionalFields": {
+          "description": "=Zamówienie: {{ $json.lines.map(l => `- ${l.quantity} szt. ${l.product} ${l.format}, ${l.sides}-str., ${l.paper ?? 'papier standardowy'}: ${l.total} zł netto`).join('\\n') }}  Termin: {{ $json.order.deadline }} NIP: {{ $json.order.nip }} Wycena: netto {{ $json.netto }} zł | VAT {{ $json.vat }} zł | brutto {{ $json.brutto }} zł",
+          "email": "={{ $('Edit Fields').first().json.sender }}",
+          "firstname": "={{ $json.order.customer_name.split(' ').slice(0, -1).join(' ') }}",
+          "phone": "={{ $json.order.phone }}"
+        }
+      },
+      "type": "n8n-nodes-base.salesforce",
+      "typeVersion": 1.1,
+      "position": [
+        1712,
+        -96
+      ],
+      "id": "94bc2726-6acb-43aa-b37b-1806bb91bee1",
+      "name": "Upsert lead",
+      "credentials": {
+        "salesforceOAuth2Api": {
+          "id": "3q4FJFbOALCW0Rh8",
+          "name": "Salesforce account"
+        }
+      }
     },
     {
       "parameters": {
@@ -60,27 +217,13 @@
         0
       ],
       "id": "aa5b072b-9f71-4e55-9f40-cbe67d487fc1",
-      "name": "Message a model",
+      "name": "Ekstrakcja danych (AI)",
       "credentials": {
         "googlePalmApi": {
           "id": "p0Bv9rWWmbiCJoqy",
           "name": "Google Gemini(PaLM) Api account"
         }
       }
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const raw = $json.content?.parts?.[0]?.text ?? '';\nconst clean = raw.replace(/```json|```/g, '').trim();\n\nlet order;\ntry {\n  order = JSON.parse(clean);\n} catch (e) {\n  return { json: { valid: false, errors: ['LLM nie zwrócił poprawnego JSON'], raw } };\n}\n\nconst errors = [];\n\nif (!order.customer_name) errors.push('Brak imienia i nazwiska');\nif (!Array.isArray(order.items) || order.items.length === 0) errors.push('Brak pozycji zamówienia');\n\n(order.items || []).forEach((it, i) => {\n  if (!Number.isInteger(it.quantity) || it.quantity <= 0) errors.push(`Pozycja ${i + 1}: nieprawidłowa ilość`);\n  if (!it.format) errors.push(`Pozycja ${i + 1}: brak formatu`);\n});\n\n// Walidacja NIP (suma kontrolna)\nif (order.nip) {\n  const d = order.nip.replace(/\\D/g, '');\n  const w = [6, 5, 7, 2, 3, 4, 5, 6, 7];\n  const ok = d.length === 10 &&\n    w.reduce((s, wi, i) => s + wi * Number(d[i]), 0) % 11 === Number(d[9]);\n  if (!ok) errors.push('Nieprawidłowy NIP');\n  order.nip = d;\n}\n\nif (order.deadline && new Date(order.deadline) < new Date(new Date().toDateString())) {\n  errors.push('Termin w przeszłości');\n}\n\nerrors.push(...(order.missing_info || []).map(f => `Brak danych: ${f}`));\n\nreturn { json: { valid: errors.length === 0, errors, order } };"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        816,
-        0
-      ],
-      "id": "9c624395-5ab4-4b8d-b123-df4a579e0fbc",
-      "name": "Walidacja"
     },
     {
       "parameters": {
@@ -107,26 +250,13 @@
         0
       ],
       "id": "d98531ea-90c6-4ca3-9cae-ae5ce467af93",
-      "name": "Get row(s) in sheet",
+      "name": "Cennik",
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "kgAUyjws2zvL0KFl",
           "name": "Google Sheets account"
         }
       }
-    },
-    {
-      "parameters": {
-        "jsCode": "const { order, valid, errors } = $('Walidacja').first().json;\nconst prices = $input.all().map(i => i.json);\nconst norm = v => String(v ?? '').trim().toLowerCase();\n\nconst lines = (order.items || []).map(it => {\n  const tier = prices\n    .filter(p =>\n      norm(p.product) === norm(it.product) &&\n      norm(p.format) === norm(it.format) &&\n      norm(p.sides) === norm(it.sides ?? '1') &&\n      it.quantity >= Number(p.min_qty))\n    .sort((a, b) => Number(b.min_qty) - Number(a.min_qty))[0];\n\n  if (!tier) return { ...it, total: null, error: `Brak ceny dla: ${it.product} ${it.format}` };\n\n  const per100 = Number(tier.price_per_100);\n  return { ...it, price_per_100: per100, total: Math.round(per100 * it.quantity) / 100 };\n});\n\nconst pricingErrors = lines.filter(l => l.error).map(l => l.error);\nconst netto = Math.round(lines.reduce((s, l) => s + (l.total || 0), 0) * 100) / 100;\nconst vat = Math.round(netto * 0.23 * 100) / 100;\n\nreturn [{\n  json: {\n    valid: valid && pricingErrors.length === 0,\n    errors: [...errors, ...pricingErrors],\n    order,\n    lines,\n    netto,\n    vat,\n    brutto: Math.round((netto + vat) * 100) / 100\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1264,
-        0
-      ],
-      "id": "cf8a462d-462d-4972-824a-8c04182f24ae",
-      "name": "Wycena"
     },
     {
       "parameters": {
@@ -160,63 +290,135 @@
         0
       ],
       "id": "1b31e026-106c-434a-b465-d1270dcdbce5",
-      "name": "If"
+      "name": "Dane poprawne?"
     },
     {
       "parameters": {
-        "company": "={{ $json.order.company || 'Osoba prywatna' }}",
-        "lastname": "={{ $json.order.customer_name.split(' ').slice(-1)[0] }}",
-        "additionalFields": {
-          "description": "=Zamówienie: {{ $json.lines.map(l => `- ${l.quantity} szt. ${l.product} ${l.format}, ${l.sides}-str., ${l.paper}: ${l.total} zł netto`).join('\\n') }}  Termin: {{ $json.order.deadline }} NIP: {{ $json.order.nip }} Wycena: netto {{ $json.netto }} zł | VAT {{ $json.vat }} zł | brutto {{ $json.brutto }} zł",
-          "firstname": "={{ $json.order.customer_name.split(' ').slice(0, -1).join(' ') }}",
-          "phone": "={{ $json.order.phone }}"
+        "resource": "draft",
+        "subject": "=Re: {{ $('Edit Fields').first().json.subject }}",
+        "message": "={{ $json.content.parts[0].text }}",
+        "options": {
+          "threadId": "={{ $('Edit Fields').first().json.thread_id }}",
+          "sendTo": "={{ $('Edit Fields').first().json.sender }}"
         }
       },
-      "type": "n8n-nodes-base.salesforce",
-      "typeVersion": 1.1,
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
       "position": [
-        1712,
+        2304,
         -96
       ],
-      "id": "94bc2726-6acb-43aa-b37b-1806bb91bee1",
-      "name": "Create a lead",
+      "id": "b037f4b2-35f9-40b2-afc6-e43da74c2181",
+      "name": "Szkic oferty",
+      "webhookId": "f858b046-343c-4b70-adcc-e58cd7f90f48",
       "credentials": {
-        "salesforceOAuth2Api": {
-          "id": "3q4FJFbOALCW0Rh8",
-          "name": "Salesforce account"
+        "gmailOAuth2": {
+          "id": "8ypWgNyJ8TfqaxQz",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Re: {{ $('Edit Fields').first().json.subject }}",
+        "message": "={{ $json.content.parts[0].text }}",
+        "options": {
+          "threadId": "={{ $('Edit Fields').first().json.thread_id }}",
+          "sendTo": "={{ $('Edit Fields').first().json.sender }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2080,
+        96
+      ],
+      "id": "c45537d5-7d9a-4339-bdeb-ab26b457cd8f",
+      "name": "Szkic prośby o dane",
+      "webhookId": "0da8eb2b-fc5f-48c9-b6e4-07ec7bdc4119",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "8ypWgNyJ8TfqaxQz",
+          "name": "Gmail account"
         }
       }
     }
   ],
-  "pinData": {},
+  "pinData": {
+    "Gmail Trigger": [
+      {
+        "json": {
+          "id": "1a18376c925fbfbb",
+          "threadId": "1a18376c925fbfbb",
+          "labelIds": [
+            "UNREAD",
+            "CATEGORY_PERSONAL",
+            "INBOX"
+          ],
+          "sizeEstimate": 7458,
+          "headers": {
+            "delivered-to": "Delivered-To: tralbek100@gmail.com",
+            "received": "Received: from mail-sor-f41.google.com (mail-sor-f41.google.com. [209.85.220.41])\r\n        by mx.google.com with SMTPS id 956f58d0204a3-67a8cc99b85sor107314d50.6.2026.10.28.10.02.42\r\n        for <tralbek100@gmail.com>\r\n        (Google Transport Security);\r\n        Wed, 28 Oct 2026 10:02:42 -0700 (PDT)",
+            "x-received": "X-Received: by 2002:a05:690e:4511:20b0:679:c7d1:fff9 with SMTP id\r\n 956f58d0204a3-67a8d268547mr63768d50.38.1793206961663; Wed, 28 Oct 2026\r\n 10:02:41 -0700 (PDT)",
+            "arc-seal": "ARC-Seal: i=1; a=rsa-sha256; t=1793206962; cv=none;\r\n        d=google.com; s=arc-20260327;\r\n        b=Q5qv759d2Uvl/0BPRukQq62IXDPcw12f/pj0ecF0Ar7AJHoDBmj9WuRypPXeN+4cOn\r\n         Fhynp1SBwuSL03RrZHJ84PtRZucP5LqUGUsqTqVxzFmAojMKwNwFEQoHaM7z+SDPrtmE\r\n         a7I/xzNCp3TML/g/ebDwUTI4RH8ghvijR5rECqgGAqf0avJj0ryqNbLvrnfux/N/jm5o\r\n         kOiMxCDKStPwuEGwna/zZrxDW5om6N0CmTB4pc2JywQz2KHdXh75cVBlQuQEU/kQT8gn\r\n         FxyxfKofQckLs4f2B8Yps+9I3wtFdhcdsSsGKrTtVqreWkRfVDIulzmoLAoFfDpywZyJ\r\n         FZ5w==",
+            "arc-message-signature": "ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20260327;\r\n        h=to:subject:message-id:date:from:mime-version:dkim-signature;\r\n        bh=kcjW9iO/iUX1lysS5P96WCZ4cDA7+U9+A5vb0/Ruj8o=;\r\n        fh=361BCq1WcRJHhfkISiOsoo5qViQps245V+d4QK3Y6Dc=;\r\n        b=pu68lR0JQaf9oPomsWbPJqgGVSgbsaMneCXpepuCkQjRJHjrngIusfsuyGw0Yg6qw8\r\n         fy0afLzxX1NL6UmW9B0s3mWnRTiaa3h+ubHOeHiQMwrOF7HYczq2GvO7bCQR1jluEZBO\r\n         9FkOxucZPApq+eugN1l8MFilN3Dej68dzb2BqUOvsmXPQ5zG6ty8Bh0z6Jl1PsyW4S5A\r\n         FJAjSowXU3aX/CmkcIq7WGyMBRyB6hdaWtvugx3g6BtetZxnCq9U/A/AZqiyopodc/Ci\r\n         uOuwTeUsVzuILQ7s3KY9bytNv2QiolXM9zLsYm0PdXA/7/JpD8JAWeUPqMC0VoByMBtA\r\n         kcVQ==;\r\n        dara=google.com",
+            "arc-authentication-results": "ARC-Authentication-Results: i=1; mx.google.com; arc=none",
+            "return-path": "Return-Path: <tralbi100@gmail.com>",
+            "received-spf": "Received-SPF: pass (google.com: domain of tralbi100@gmail.com designates 209.85.220.41 as permitted sender) client-ip=209.85.220.41;",
+            "authentication-results": "Authentication-Results: mx.google.com;\r\n       dkim=pass header.i=@gmail.com header.s=20260707 header.b=fcNdb8L+;\r\n       arc=pass (i=1);\r\n       spf=pass (google.com: domain of tralbi100@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=tralbi100@gmail.com;\r\n       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com;\r\n       dara=pass header.i=@gmail.com",
+            "dkim-signature": "DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=gmail.com; s=20260707; t=1793206962; x=1793811762; dara=google.com;\r\n        h=content-type:to:subject:message-id:date:from:mime-version:from:to\r\n         :cc:subject:date:message-id:reply-to:content-type;\r\n        bh=kcjW9iO/iUX1lysS5P96WCZ4cDA7+U9+A5vb0/Ruj8o=;\r\n        b=fcNdb8L+iheb9u3cQ6z1S2LzCEtazA1sPEPPejDPJHCTCEMdCv5CXKmTvEjxO0C0JS\r\n         DPttXy/qkUL3upTKvA9QJTO7GF+yWwymQztGw/ipaCpnJeqhJ5nYDzy/+zcwZPUn2BSF\r\n         GPaNqRAO6iTXX2rUatE5XsjWY31kZhTn+Wdg1n6MZMV7iOrWahs6+/0De+aLS9N4dlDX\r\n         kjfxxiDzs2GWitSFdWGJvMQgAR56aeXGtzzGy7IkQDE9eqG+MzSqmHQQJNeZ7ZNJnYDY\r\n         UV1+Rw7MHBBxCH+H1BClcfXFyxYi2jo6alpkMGK4gaDNrys1gEbL8jCA9Lts4A1A4ykB\r\n         ygVg==",
+            "x-google-dkim-signature": "X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n        d=1e100.net; s=20260707; t=1793206962; x=1793811762;\r\n        h=content-type:to:subject:message-id:date:from:mime-version:x-gm-gg\r\n         :x-gm-message-state:from:to:cc:subject:date:message-id:reply-to\r\n         :content-type;\r\n        bh=kcjW9iO/iUX1lysS5P96WCZ4cDA7+U9+A5vb0/Ruj8o=;\r\n        b=KwD2DpsXjtnU6mRz0P7s8NdN1RWjmomlADhwQOTmpOFlrvNDbHxfMezxPYO82cMfjB\r\n         Dyluw83FlS72QRyAV4F2fuuy9hMe/P291wTlV1i7lh04XPDSPmyndI4DXgNvKOOnIjOa\r\n         aPbCp070GQBHa/5UbQuCofg+5WASRa62nvxfbzP3j5CPWV3ISUpZPD5ZuDhDJ2T/q31p\r\n         EaxK5z5F8PbzmWe7XW1ffJkG5lzjtjMg3HON/ndg1pmAajb4RWQy80zJNVsLyY8cVoyg\r\n         4a9mUDAmW7A+IYJ2K+jNtz6uIjgTtWGI6cloqw9hSBCnhJhdG5YtxEMKxwn32rE5f1AI\r\n         QrVw==",
+            "x-gm-message-state": "X-Gm-Message-State: AFq9FYJABaV4sHO6r/G5jLTQX9ElNnoo47UJgl4q4kSxHx4xThoEi5f3\r\n\tC6INxbbcANTblzMjdcde3+Xn0nCorcxnpaMMWKL6V2MMAq7AhCmm63drdwBvrz0t9apRKDGjG29\r\n\tRFTRtpcG4Aj8PkLnTUCOheTKlMa0AsY3XwJy6",
+            "x-gm-gg": "X-Gm-Gg: AYBFou10JTEIQt/STPVybAZGpGVmWg28b1vzDORM7QGefBRMBv/MaD/suBneqo1THy5\r\n\tz0fqnAX1VrsCA+hY+8aBr9cdp2FmKV0H7KZmQ/AE27sAYxpBdkBzBDgAhmss0V/z5uCWYN9jfyu\r\n\tvdIai9rzo28Ka75OD3ZKjct84FmsvVm3oPTJEAitfLkfOA4qv5eK8rTjASRCjP9PZbwk4CzDScR\r\n\t0kb8qPMr5aGbggL6BuzWtfB2nKv/dTEY18qkQ62hzG2gPiTOwhOd4NKfc8t5/WorE1b98riChhQ\r\n\tLoaRtHtEeQKfIGcgVae7dPY5EL+/z/TNZ+E8lHp+T1Rfge80AaOEcLf6+0cIEB/UIw7vu3X7M0I\r\n\taltkY932bevGTHJiMZHUT12xJN8bs/bwcYD3p",
+            "mime-version": "MIME-Version: 1.0",
+            "from": "From: Albert KIstowski <tralbi100@gmail.com>",
+            "date": "Date: Wed, 28 Oct 2026 18:02:30 +0100",
+            "x-gm-features": "X-Gm-Features: AclHuK9I5Tb3da-I2SNrFS2fFZIEoSRUUFeiWET2xHa_0NeqTTnHWPxb6QqS3x0",
+            "message-id": "Message-ID: <CAJ8e016vA=b6HYBAPJHYchRBiN+JpSF6hAj9ncWrTYCHzP2spQ@mail.gmail.com>",
+            "subject": "Subject: Oferta",
+            "to": "To: tralbek100@gmail.com",
+            "content-type": "Content-Type: multipart/alternative; boundary=\"000000000000f571ec065ee9879b\""
+          },
+          "html": "<div dir=\"ltr\">Dzień dobry, poproszę 1000 ulotek A5 jednostronnie na papierze 130g, termin za tydzień. Firma Piekarnia Kłos, NIP 7781234563. Jan Kowalski, tel. 501 222 333</div>\n",
+          "text": "Dzień dobry, poproszę 1000 ulotek A5 jednostronnie na papierze 130g, termin\nza tydzień. Firma Piekarnia Kłos, NIP 7781234563. Jan Kowalski, tel. 501\n222 333\n",
+          "textAsHtml": "<p>Dzie&nacute; dobry, poprosz&eogon; 1000 ulotek A5 jednostronnie na papierze 130g, termin<br/>za tydzie&nacute;. Firma Piekarnia K&lstrok;os, NIP 7781234563. Jan Kowalski, tel. 501<br/>222 333</p>",
+          "subject": "Oferta",
+          "date": "2026-10-28T17:02:30.000Z",
+          "to": {
+            "value": [
+              {
+                "address": "tralbek100@gmail.com",
+                "name": ""
+              }
+            ],
+            "html": "<span class=\"mp_address_group\"><a href=\"mailto:tralbek100@gmail.com\" class=\"mp_address_email\">tralbek100@gmail.com</a></span>",
+            "text": "tralbek100@gmail.com"
+          },
+          "from": {
+            "value": [
+              {
+                "address": "tralbi100@gmail.com",
+                "name": "Albert KIstowski"
+              }
+            ],
+            "html": "<span class=\"mp_address_group\"><span class=\"mp_address_name\">Albert KIstowski</span> &lt;<a href=\"mailto:tralbi100@gmail.com\" class=\"mp_address_email\">tralbi100@gmail.com</a>&gt;</span>",
+            "text": "\"Albert KIstowski\" <tralbi100@gmail.com>"
+          },
+          "messageId": "<CAJ8e016vA=b6HYBAPJHYchRBiN+JpSF6hAj9ncWrTYCHzP2spQ@mail.gmail.com>"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
   "connections": {
-    "When clicking ‘Execute workflow’": {
-      "main": [
-        [
-          {
-            "node": "Edit Fields",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Edit Fields": {
       "main": [
         [
           {
-            "node": "Message a model",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Message a model": {
-      "main": [
-        [
-          {
-            "node": "Walidacja",
+            "node": "Ekstrakcja danych (AI)",
             "type": "main",
             "index": 0
           }
@@ -227,18 +429,7 @@
       "main": [
         [
           {
-            "node": "Get row(s) in sheet",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Get row(s) in sheet": {
-      "main": [
-        [
-          {
-            "node": "Wycena",
+            "node": "Cennik",
             "type": "main",
             "index": 0
           }
@@ -249,18 +440,91 @@
       "main": [
         [
           {
-            "node": "If",
+            "node": "Dane poprawne?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "If": {
+    "Oferta": {
       "main": [
         [
           {
-            "node": "Create a lead",
+            "node": "Szkic oferty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prośba o dane": {
+      "main": [
+        [
+          {
+            "node": "Szkic prośby o dane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert lead": {
+      "main": [
+        [
+          {
+            "node": "Oferta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ekstrakcja danych (AI)": {
+      "main": [
+        [
+          {
+            "node": "Walidacja",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cennik": {
+      "main": [
+        [
+          {
+            "node": "Wycena",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dane poprawne?": {
+      "main": [
+        [
+          {
+            "node": "Upsert lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prośba o dane",
             "type": "main",
             "index": 0
           }
@@ -268,13 +532,13 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
     "availableInMCP": true
   },
-  "versionId": "56e6595e-5d70-4fee-92eb-bd45640b6a08",
+  "versionId": "2d91b764-9726-4524-8cb7-44eb98ac465f",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "8718577bb6709b346a0488f0937201d016efb5294a66aaa2ca0f408a1655cf59"
